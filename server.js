@@ -16,9 +16,9 @@ const app = express();
 app.use(express.json());
 
 // ─── YOUR TWILIO CREDENTIALS (only you need these) ───────────────────────────
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
-const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN  || "";
-const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || "";
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN  || "your_auth_token_here";
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || "+1XXXXXXXXXX";
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
@@ -204,6 +204,12 @@ app.get("/stats", (req, res) => {
     // Annual revenue estimate at $2.99/user (after Google's 15% cut = $2.54/user)
     estimatedAnnualRevenue: `$${(active * 2.54).toFixed(2)}`,
   });
+});
+
+// Privacy policy
+app.get("/privacy", (req, res) => {
+  const path = require("path");
+  res.sendFile(path.join(__dirname, "privacy.html"));
 });
 
 // Health check
