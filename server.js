@@ -11,22 +11,37 @@ const twilio = require("twilio");
 const cron = require("node-cron");
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
 
 // ─── YOUR TWILIO CREDENTIALS (only you need these) ───────────────────────────
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN  || "your_auth_token_here";
-const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || "+1XXXXXXXXXX";
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
+const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN  || "";
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || "";
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // ─── SIMPLE USER DATABASE (stored in users.json file) ────────────────────────
 // Format: { "phone": { tickets: [...], registeredAt: "...", active: true } }
-const DB_FILE = "./users.json";
+// Saved on a Railway Volume (DATA_DIR=/data) so subscribers survive redeploys.
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DB_FILE = path.join(DATA_DIR, "users.json");
+const ADMIN_KEY = process.env.ADMIN_KEY || "";
+console.log("DATA_DIR:", DATA_DIR, DATA_DIR === __dirname ? "(WARNING: not a Railway Volume - users are lost on redeploy)" : "");
+console.log("ADMIN_KEY:", ADMIN_KEY ? "SET" : "MISSING (admin routes open)");
+
+function requireAdmin(req, res) {
+  if (ADMIN_KEY && req.query.key !== ADMIN_KEY) {
+    res.status(403).json({ error: "Forbidden" });
+    return false;
+  }
+  return true;
+}
 
 function loadUsers() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, "{}");
   return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 }
@@ -72,16 +87,17 @@ function buildWinMessage(draw, ticketResults, totalWon) {
   });
   const lines = ticketResults
     .filter(r => r.prize > 0)
-    .map((r, i) => `  Ticket ${i + 1}: +$${r.prize.toLocaleString()} (${r.matched} match${r.megaMatch ? "+Mega" : ""})`);
+    .map((r, i) => `Ticket ${i + 1}: $${r.prize.toLocaleString()} (${r.matched} match${r.megaMatch ? "+Mega" : ""})`);
 
   return [
-    `🎉 YOU WON! SuperLotto Plus — ${date}`,
+    `SuperLotto Plus Winner Alerts: YOU WON! ${date}`,
     `Winning: ${draw.numbers.join("-")} Mega:${draw.mega}`,
     ``,
     lines.join("\n"),
     ``,
-    `Total: $${totalWon.toLocaleString()} 🏆`,
-    `Check your tickets to claim your prize!`,
+    `Total: $${totalWon.toLocaleString()}`,
+    `Check your ticket and claim with the CA Lottery. Official results are final.`,
+    `Reply STOP to opt out.`,
   ].join("\n");
 }
 
@@ -177,7 +193,7 @@ app.post("/update-tickets", (req, res) => {
   res.json({ success: true, message: "Tickets updated!" });
 });
 
-// User cancels (e.g. cancelled Google Play subscription)
+// User cancels (e.g. cancelled subscription)
 app.post("/cancel", (req, res) => {
   const { phone } = req.body;
   const users = loadUsers();
@@ -190,25 +206,36 @@ app.post("/cancel", (req, res) => {
 
 // Admin: manually trigger a draw check (for testing)
 app.get("/check-now", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
   res.json({ status: "Checking now — winners will be texted shortly!" });
   await checkAllUsersAndNotify();
 });
 
 // Admin: see how many users are registered
 app.get("/stats", (req, res) => {
+  if (!requireAdmin(req, res)) return;
   const users = loadUsers();
   const active = Object.values(users).filter(u => u.active).length;
+
+  // Apple's Small Business Program was submitted 2026-09-12.
+  // Approval + the 15% rate typically take effect on Apple's next fiscal
+  // period boundary after approval — update this date once you get the
+  // approval email, then the calc below switches automatically.
+  const APPLE_SMALL_BIZ_EFFECTIVE_DATE = null; // e.g. new Date("2026-10-01") once approved
+  const APPLE_RATE = (APPLE_SMALL_BIZ_EFFECTIVE_DATE && new Date() >= APPLE_SMALL_BIZ_EFFECTIVE_DATE)
+    ? 0.15
+    : 0.30;
+  const netPerUser = 2.99 * (1 - APPLE_RATE);
+
   res.json({
     totalUsers: Object.keys(users).length,
     activeSubscribers: active,
-    // Annual revenue estimate at $2.99/user (after Google's 15% cut = $2.54/user)
-    estimatedAnnualRevenue: `$${(active * 2.54).toFixed(2)}`,
+    estimatedAnnualRevenue: `$${(active * netPerUser).toFixed(2)}`,
   });
 });
 
 // Privacy policy
 app.get("/privacy", (req, res) => {
-  const path = require("path");
   res.sendFile(path.join(__dirname, "privacy.html"));
 });
 
@@ -217,9 +244,7 @@ app.get("/health", (req, res) => {
   res.json({ status: "running", schedule: "Wed & Sat 8:45 PM PT" });
 });
 
-app.listen(3000, () => {
-  console.log("SuperLotto Plus server running on port 3000");
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`SuperLotto Plus server running on port ${process.env.PORT || 3000}`);
   console.log("Schedule: Wednesdays & Saturdays at 8:45 PM Pacific");
-  console.log("Test: http://localhost:3000/check-now");
-  console.log("Stats: http://localhost:3000/stats");
 });
